@@ -1,0 +1,14 @@
+[project]
+name = "rag-langchain"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "bs4>=0.0.2",
+    "langchain>=1.0.5",
+    "langchain-community>=0.4.1",
+    "langchain-openai>=1.0.2",
+    "langchain-text-splitters>=1.0.0",
+    "pymilvus>=2.6.3",
+]
