@@ -1,3 +1,15 @@
+# LangChain Q&A Application
+This repository contains a simple question-answering (Q&A) application built using the LangChain library. The application is designed to retrieve information from a collection of documents and provide answers to user queries.
+
+## Features
+- Loads documents from a list of URLs, extracting only post titles, headers, and content.
+- Splits the loaded documents into smaller chunks for efficient processing.
+- Embeds each document chunk using OpenAI's text-embedding model.
+- Stores the embedded documents in an InMemoryVectorStore for efficient retrieval.
+- Provides a custom tool to retrieve context from the stored documents based on user queries.
+- Implements two different methods for generating responses:
+  1. A Retrieval-only Agent (RAG) that uses the custom tool to fetch relevant documents and generates an answer based on those documents.
+  2. A Retrieval with RAG Chains agent that injects context into the state messages before generating a response.
 
 ## Configuring
 
