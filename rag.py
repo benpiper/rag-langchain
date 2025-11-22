@@ -64,8 +64,6 @@ query = input()
 
 # RETRIEVAL WITH RAG AGENT
 
-logging.info("RAG agent")
-
 # Define the tool to fetch docs from the document store
 
 
@@ -88,7 +86,7 @@ PROMPT = (
     "Use the tool to help answer user queries."
 )
 agent = create_agent(model, tools, system_prompt=PROMPT)
-
+logging.info("RAG agent response")
 for event in agent.stream(
     {"messages": [{"role": "user", "content": query}]},
     stream_mode="values",
@@ -97,9 +95,6 @@ for event in agent.stream(
 
 
 # RETRIEVAL WITH RAG CHAINS
-
-logging.info("RAG chains")
-
 
 @dynamic_prompt
 def prompt_with_context(request: ModelRequest) -> str:
@@ -118,7 +113,7 @@ def prompt_with_context(request: ModelRequest) -> str:
 
 
 agent = create_agent(model, tools=[], middleware=[prompt_with_context])
-
+logging.info("RAG chains response")
 for step in agent.stream(
     {"messages": [{"role": "user", "content": query}]},
     stream_mode="values",
