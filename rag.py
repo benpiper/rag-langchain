@@ -9,12 +9,11 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain.tools import tool
 from langchain.agents import create_agent
 from langchain.agents.middleware import dynamic_prompt, ModelRequest
-#from langchain_milvus import Milvus
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 # Set API key in .env
-# os.environ["OPENAI_API_KEY"] = "sk-..."
+# os.environ["OPENAI_API_KEY"] = "..."
 
 # Set the chat model
 model = ChatOpenAI(model="gpt-4.1")
@@ -25,36 +24,23 @@ embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
 # Initialize the in-memory vector store
 vector_store = InMemoryVectorStore(embeddings)
 
-# Initialize the Milvus vector store
-""" 
-URI = "./milvus_benpiper_blog.db"
-
-vector_store = Milvus(
-    embedding_function=embeddings,
-    connection_args={"uri": URI},
-    index_params={"index_type": "FLAT", "metric_type": "L2"},
-)
- """
 # INDEXING
 # Load documents from a URL
 # Only keep post title, headers, and content from the full HTML.
 bs4_strainer = bs4.SoupStrainer(class_="post_content")
 loader = WebBaseLoader(
-    web_paths=("https://benpiper.com/articles/ask-atheist-where-the-universe-came-from/",
-               "https://benpiper.com/articles/matter-proves-the-non-material/",
-               "https://benpiper.com/articles/the-people-who-believe-evolution-dont-know-what-it-is-cant-defend-it/",
-               "https://benpiper.com/articles/what-evolution-isnt/",
-               "https://benpiper.com/articles/atheists-materialists-guilty-nihilism/",
-               "https://benpiper.com/articles/biblical-creation-account-genesis-theory-evolution/",
-               "https://benpiper.com/articles/why-god-doesnt-stop-pain-evil-suffering/",
-               "https://benpiper.com/articles/should-christians-cuss/",
-               "https://benpiper.com/articles/libertarian-deception/"
+    web_paths=("https://muscleandstrength.com/articles/gain-muscle-strength-workouts-limited-time/",
+               "https://muscleandstrength.com/articles/ranking-muscle-building-exercises-beast-least/",
+               "https://muscleandstrength.com/articles/truth-rep-ranges-muscle-growth/",
+               "https://muscleandstrength.com/articles/build-muscle-50-dollar-budget/",
+               "https://muscleandstrength.com/expert-guides/over-40-muscle-building/",
+               "https://muscleandstrength.com/articles/buiding-muscle-why-less-is-more.html/"
                ),
     bs_kwargs={"parse_only": bs4_strainer},
 )
 docs = loader.load()
 
-assert len(docs) == 9
+assert len(docs) == 6  # Change as needed
 logging.debug("Total characters: %s", {len(docs[0].page_content)})
 logging.debug(docs[0].page_content[:500])
 
@@ -65,17 +51,23 @@ text_splitter = RecursiveCharacterTextSplitter(
 )
 all_splits = text_splitter.split_documents(docs)
 
-print(f"Split blog post into {len(all_splits)} sub-documents.")
+logging.info("Split into %s sub-documents.", len(all_splits))
 
 # Embed and store
 
 document_ids = vector_store.add_documents(documents=all_splits)
 logging.info("Stored documents in vector store: %s", document_ids)
-#print(document_ids[:3])
+# print(document_ids[:3])
+
+print("Enter your query: ")
+query = input()
 
 # RETRIEVAL WITH RAG AGENT
 
+logging.info("RAG agent")
+
 # Define the tool to fetch docs from the document store
+
 
 @tool(response_format="content_and_artifact")
 def retrieve_context(query: str):
@@ -91,16 +83,11 @@ def retrieve_context(query: str):
 # Create the agent
 tools = [retrieve_context]
 # If desired, specify custom instructions
-prompt = (
-    "You have access to a tool that retrieves context from blog posts. "
+PROMPT = (
+    "You have access to a tool that retrieves context from posts. "
     "Use the tool to help answer user queries."
 )
-agent = create_agent(model, tools, system_prompt=prompt)
-
-# Text with a query
-query = (
-    "Write a short paragraph in the style of these posts.\n\n"
-)
+agent = create_agent(model, tools, system_prompt=PROMPT)
 
 for event in agent.stream(
     {"messages": [{"role": "user", "content": query}]},
@@ -110,6 +97,8 @@ for event in agent.stream(
 
 
 # RETRIEVAL WITH RAG CHAINS
+
+logging.info("RAG chains")
 
 
 @dynamic_prompt
@@ -130,7 +119,6 @@ def prompt_with_context(request: ModelRequest) -> str:
 
 agent = create_agent(model, tools=[], middleware=[prompt_with_context])
 
-query = "Write a short paragraph in the style of these posts"
 for step in agent.stream(
     {"messages": [{"role": "user", "content": query}]},
     stream_mode="values",
