@@ -2,7 +2,7 @@ import os
 import logging
 from langchain_openai import ChatOpenAI
 from langchain_openai import OpenAIEmbeddings
-from langchain_core.vectorstores import InMemoryVectorStore
+from langchain_milvus import Milvus
 import bs4
 from langchain_community.document_loaders import WebBaseLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -10,54 +10,63 @@ from langchain.tools import tool
 from langchain.agents import create_agent
 from langchain.agents.middleware import dynamic_prompt, ModelRequest
 
-logging.basicConfig(level=logging.INFO)
-
-# Set API key in .env
-# os.environ["OPENAI_API_KEY"] = "..."
-
 # Set the chat model
 model = ChatOpenAI(model="gpt-4.1")
 
 # Set the embeddings model
 embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
 
-# Initialize the in-memory vector store
-vector_store = InMemoryVectorStore(embeddings)
+# Initialize the vector store
+# Use a local file for Milvus Lite
+vector_store = Milvus(
+    embedding_function=embeddings,
+    connection_args={"uri": "./milvus_demo.db"},
+    auto_id=True,
+)
 
 # INDEXING
-# Load documents from a URL
-# Only keep post title, headers, and content from the full HTML.
-bs4_strainer = bs4.SoupStrainer(class_="post_content")
-loader = WebBaseLoader(
-    web_paths=("https://muscleandstrength.com/articles/gain-muscle-strength-workouts-limited-time/",
-               "https://muscleandstrength.com/articles/ranking-muscle-building-exercises-beast-least/",
-               "https://muscleandstrength.com/articles/truth-rep-ranges-muscle-growth/",
-               "https://muscleandstrength.com/articles/build-muscle-50-dollar-budget/",
-               "https://muscleandstrength.com/expert-guides/over-40-muscle-building/",
-               "https://muscleandstrength.com/articles/buiding-muscle-why-less-is-more.html/"
-               ),
-    bs_kwargs={"parse_only": bs4_strainer},
-)
-docs = loader.load()
+# Check if we need to ingest data (simple check: is the store empty?)
+# Note: Milvus integration in LangChain doesn't have a cheap "count" method easily accessible 
+# without connecting directly, but we can try a dummy search or just rely on a flag/logic.
+# For this demo, we'll just check if the file exists, or better, just try to search first.
+# If search returns nothing, we ingest.
 
-assert len(docs) == 6  # Change as needed
-logging.debug("Total characters: %s", {len(docs[0].page_content)})
-logging.debug(docs[0].page_content[:500])
+results = vector_store.similarity_search("muscle", k=1)
+if not results:
+    logging.info("Vector store is empty. Indexing documents...")
+    # Load documents from a URL
+    # Only keep post title, headers, and content from the full HTML.
+    bs4_strainer = bs4.SoupStrainer(class_="content")
+    loader = WebBaseLoader(
+        web_paths=("https://muscleandstrength.com/articles/gain-muscle-strength-workouts-limited-time/",
+                   "https://muscleandstrength.com/articles/ranking-muscle-building-exercises-beast-least/",
+                   "https://muscleandstrength.com/articles/truth-rep-ranges-muscle-growth/",
+                   "https://muscleandstrength.com/articles/build-muscle-50-dollar-budget/",
+                   "https://muscleandstrength.com/expert-guides/over-40-muscle-building/",
+                   "https://muscleandstrength.com/articles/buiding-muscle-why-less-is-more.html/"
+                   ),
+        bs_kwargs={"parse_only": bs4_strainer},
+    )
+    docs = loader.load()
 
-text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=1000,  # chunk size (characters)
-    chunk_overlap=200,  # chunk overlap (characters)
-    add_start_index=True,  # track index in original document
-)
-all_splits = text_splitter.split_documents(docs)
+    assert len(docs) == 6  # Change as needed
+    logging.debug("Total characters: %s", {len(docs[0].page_content)})
+    logging.debug(docs[0].page_content[:500])
 
-logging.info("Split into %s sub-documents.", len(all_splits))
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,  # chunk size (characters)
+        chunk_overlap=200,  # chunk overlap (characters)
+        add_start_index=True,  # track index in original document
+    )
+    all_splits = text_splitter.split_documents(docs)
 
-# Embed and store
+    logging.info("Split into %s sub-documents.", len(all_splits))
 
-document_ids = vector_store.add_documents(documents=all_splits)
-logging.info("Stored documents in vector store: %s", document_ids)
-# print(document_ids[:3])
+    # Embed and store
+    document_ids = vector_store.add_documents(documents=all_splits)
+    logging.info("Stored documents in vector store: %s", document_ids)
+else:
+    logging.info("Vector store already contains data. Skipping indexing.")
 
 print("Enter your query: ")
 query = input()
