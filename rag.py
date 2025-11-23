@@ -1,10 +1,11 @@
 import os
 import logging
+import argparse
 from langchain_openai import ChatOpenAI
 from langchain_openai import OpenAIEmbeddings
 from langchain_milvus import Milvus
 import bs4
-from langchain_community.document_loaders import WebBaseLoader
+from langchain_community.document_loaders import WebBaseLoader, DirectoryLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain.tools import tool
 from langchain.agents import create_agent
@@ -37,21 +38,49 @@ if not results:
     # Load documents from a URL
     # Only keep post title, headers, and content from the full HTML.
     bs4_strainer = bs4.SoupStrainer(class_="content")
+    # Load URLs from sources.txt
+    if os.path.exists("sources.txt"):
+        with open("sources.txt", "r") as f:
+            urls = [line.strip() for line in f if line.strip()]
+    else:
+        logging.warning("sources.txt not found. Using default URLs.")
+        urls = [
+            "https://muscleandstrength.com/articles/gain-muscle-strength-workouts-limited-time/",
+            "https://muscleandstrength.com/articles/ranking-muscle-building-exercises-beast-least/",
+        ]
+
     loader = WebBaseLoader(
-        web_paths=("https://muscleandstrength.com/articles/gain-muscle-strength-workouts-limited-time/",
-                   "https://muscleandstrength.com/articles/ranking-muscle-building-exercises-beast-least/",
-                   "https://muscleandstrength.com/articles/truth-rep-ranges-muscle-growth/",
-                   "https://muscleandstrength.com/articles/build-muscle-50-dollar-budget/",
-                   "https://muscleandstrength.com/expert-guides/over-40-muscle-building/",
-                   "https://muscleandstrength.com/articles/buiding-muscle-why-less-is-more.html/"
-                   ),
+        web_paths=tuple(urls),
         bs_kwargs={"parse_only": bs4_strainer},
     )
-    docs = loader.load()
+    web_docs = loader.load()
 
-    assert len(docs) == 6  # Change as needed
-    logging.debug("Total characters: %s", {len(docs[0].page_content)})
-    logging.debug(docs[0].page_content[:500])
+    # Load local documents
+    logging.info("Loading local documents from ./docs...")
+    if not os.path.exists("./docs"):
+        os.makedirs("./docs")
+        logging.info("Created ./docs directory")
+    
+    # Load .txt and .md files
+    local_loader = DirectoryLoader("./docs", glob="**/*.txt", loader_cls=TextLoader)
+    local_docs = local_loader.load()
+    
+    # You can add another loader for .md if needed, or just use glob="**/*" with a generic loader if preferred.
+    # For now, let's also try to load .md files using TextLoader (it works for plain text content)
+    md_loader = DirectoryLoader("./docs", glob="**/*.md", loader_cls=TextLoader)
+    local_docs.extend(md_loader.load())
+
+    # Ensure all local docs have a 'title' field in metadata (required by Milvus schema if previously created with it)
+    for doc in local_docs:
+        if "title" not in doc.metadata:
+            doc.metadata["title"] = doc.metadata.get("source", "Local Document")
+
+    docs = web_docs + local_docs
+
+    # assert len(docs) == 6  # Removed assertion as count varies with local files
+    logging.debug("Total characters in first doc: %s", {len(docs[0].page_content) if docs else 0})
+    if docs:
+        logging.debug(docs[0].page_content[:500])
 
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,  # chunk size (characters)
@@ -68,8 +97,7 @@ if not results:
 else:
     logging.info("Vector store already contains data. Skipping indexing.")
 
-print("Enter your query: ")
-query = input()
+
 
 # RETRIEVAL WITH RAG AGENT
 
@@ -87,23 +115,26 @@ def retrieve_context(query: str):
     return serialized, retrieved_docs
 
 
-# Create the agent
-tools = [retrieve_context]
-# If desired, specify custom instructions
-PROMPT = (
-    "You have access to a tool that retrieves context from posts. "
-    "Use the tool to help answer user queries. "
-    "IMPORTANT: When using information from the retrieved documents, you MUST cite the source (Title or URL). "
-    "If the provided documents do not contain information about the query, explicitly state: "
-    "'The provided documents do not contain information about this topic.' and then answer based on your general knowledge if possible."
-)
-agent = create_agent(model, tools, system_prompt=PROMPT)
-logging.info("RAG agent response")
-for event in agent.stream(
-    {"messages": [{"role": "user", "content": query}]},
-    stream_mode="values",
-):
-    event["messages"][-1].pretty_print()
+# RETRIEVAL WITH RAG AGENT
+
+def run_agent(query: str):
+    # Create the agent
+    tools = [retrieve_context]
+    # If desired, specify custom instructions
+    PROMPT = (
+        "You have access to a tool that retrieves context from posts. "
+        "Use the tool to help answer user queries. "
+        "IMPORTANT: When using information from the retrieved documents, you MUST cite the source (Title or URL). "
+        "If the provided documents do not contain information about the query, explicitly state: "
+        "'The provided documents do not contain information about this topic.' and then answer based on your general knowledge if possible."
+    )
+    agent = create_agent(model, tools, system_prompt=PROMPT)
+    logging.info("RAG agent response")
+    for event in agent.stream(
+        {"messages": [{"role": "user", "content": query}]},
+        stream_mode="values",
+    ):
+        event["messages"][-1].pretty_print()
 
 
 # RETRIEVAL WITH RAG CHAINS
@@ -130,10 +161,29 @@ def prompt_with_context(request: ModelRequest) -> str:
     return system_message
 
 
-agent = create_agent(model, tools=[], middleware=[prompt_with_context])
-logging.info("RAG chains response")
-for step in agent.stream(
-    {"messages": [{"role": "user", "content": query}]},
-    stream_mode="values",
-):
-    step["messages"][-1].pretty_print()
+def run_chain(query: str):
+    agent = create_agent(model, tools=[], middleware=[prompt_with_context])
+    logging.info("RAG chains response")
+    for step in agent.stream(
+        {"messages": [{"role": "user", "content": query}]},
+        stream_mode="values",
+    ):
+        step["messages"][-1].pretty_print()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run RAG application")
+    parser.add_argument("--mode", choices=["agent", "chain"], default="agent", help="Retrieval mode (default: agent)")
+    parser.add_argument("--query", type=str, help="Query to run (optional, will prompt if not provided)")
+    args = parser.parse_args()
+
+    if args.query:
+        query = args.query
+    else:
+        print("Enter your query: ")
+        query = input()
+
+    if args.mode == "agent":
+        run_agent(query)
+    elif args.mode == "chain":
+        run_chain(query)
