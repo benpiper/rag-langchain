@@ -79,7 +79,7 @@ query = input()
 @tool(response_format="content_and_artifact")
 def retrieve_context(query: str):
     """Retrieve information to help answer a query."""
-    retrieved_docs = vector_store.similarity_search(query, k=2)
+    retrieved_docs = vector_store.similarity_search(query, k=6)
     serialized = "\n\n".join(
         (f"Source: {doc.metadata}\nContent: {doc.page_content}")
         for doc in retrieved_docs
@@ -92,7 +92,10 @@ tools = [retrieve_context]
 # If desired, specify custom instructions
 PROMPT = (
     "You have access to a tool that retrieves context from posts. "
-    "Use the tool to help answer user queries."
+    "Use the tool to help answer user queries. "
+    "IMPORTANT: When using information from the retrieved documents, you MUST cite the source (Title or URL). "
+    "If the provided documents do not contain information about the query, explicitly state: "
+    "'The provided documents do not contain information about this topic.' and then answer based on your general knowledge if possible."
 )
 agent = create_agent(model, tools, system_prompt=PROMPT)
 logging.info("RAG agent response")
@@ -109,12 +112,18 @@ for event in agent.stream(
 def prompt_with_context(request: ModelRequest) -> str:
     """Inject context into state messages."""
     last_query = request.state["messages"][-1].text
-    retrieved_docs = vector_store.similarity_search(last_query)
+    retrieved_docs = vector_store.similarity_search(last_query, k=6)
 
-    docs_content = "\n\n".join(doc.page_content for doc in retrieved_docs)
+    docs_content = "\n\n".join(
+        (f"Source: {doc.metadata}\nContent: {doc.page_content}")
+        for doc in retrieved_docs
+    )
 
     system_message = (
-        "Use the following context in your response:"
+        "Use the following context in your response. "
+        "IMPORTANT: When using information from the retrieved documents, you MUST cite the source (Title or URL). "
+        "If the provided documents do not contain information about the query, explicitly state: "
+        "'The provided documents do not contain information about this topic.' and then answer based on your general knowledge if possible."
         f"\n\n{docs_content}"
     )
 
