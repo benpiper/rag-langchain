@@ -1,27 +1,56 @@
-# LangChain Q&A Application
-This repository contains a simple question-answering (Q&A) application built using the LangChain library. The application is designed to retrieve information from a collection of documents and provide answers to user queries.
+# LangChain RAG Q&A Application
+
+This repository contains a robust question-answering (Q&A) application built using the LangChain library. The application retrieves information from web URLs and local documents to provide accurate, cited answers to user queries.
 
 ## Features
-- Loads documents from a list of URLs, extracting only post titles, headers, and content.
-- Splits the loaded documents into smaller chunks for efficient processing.
-- Embeds each document chunk using OpenAI's text-embedding model.
-- Stores the embedded documents in an InMemoryVectorStore for efficient retrieval.
-- Provides a custom tool to retrieve context from the stored documents based on user queries.
-- Implements two different methods for generating responses:
-  1. A Retrieval-only Agent (RAG) that uses the custom tool to fetch relevant documents and generates an answer based on those documents.
-  2. A Retrieval with RAG Chains agent that injects context into the state messages before generating a response.
+
+- **Data Persistence**: Uses **Milvus Lite** to store document embeddings locally (`milvus_demo.db`), avoiding redundant indexing.
+- **Multi-Source Indexing**:
+    - **Web**: Loads URLs defined in `sources.txt`.
+    - **Local**: Indexes `.txt` and `.md` files from the `docs/` directory.
+- **Source Attribution**: Responses explicitly cite the source (Title/URL) of the information.
+- **Flexible Retrieval Modes**:
+    1. **Agent Mode (Default)**: An AI agent that decides when to search the knowledge base. Best for general conversation.
+    2. **Chain Mode**: Forces a search for every query. Best for strict Q&A.
+- **Command Line Interface**: Options for non-interactive use, mode selection, and index management.
 
 ## Configuring
 
-Put your OpenAI API key in `.env` like so:
+1. **API Key**: Put your OpenAI API key in `.env`:
+   ```bash
+   OPENAI_API_KEY=sk-...
+   ```
 
-`OPENAI_API_KEY=sk-...`
+2. **Web Sources**: Add URLs to `sources.txt` (one per line).
 
-Modify `rag.py` to change the chat model, embeddings model, and URLs you want to index.
+3. **Local Documents**: Place text or markdown files in the `docs/` directory.
 
 ## Running
 
-`uv run --env-file .env -- rag.py`
+### Basic Usage
+Run the application in interactive mode (Agent default):
+```bash
+uv run --env-file .env -- rag.py
+```
 
-Enter your query when prompted. e.g. "What's the difference between whey and collagen proteins?"
+### Command Line Options
+
+| Argument | Description | Example |
+| :--- | :--- | :--- |
+| `--mode` | Choose retrieval mode (`agent` or `chain`). | `--mode chain` |
+| `--query` | Run a single query and exit. | `--query "What is overtraining?"` |
+| `--force-refresh` | Delete the database and re-index all sources. | `--force-refresh` |
+
+### Examples
+
+**Run a single query in Chain mode:**
+```bash
+uv run --env-file .env -- rag.py --mode chain --query "Best exercises for back?"
+```
+
+**Update the index after changing sources:**
+```bash
+uv run --env-file .env -- rag.py --force-refresh
+```
+
 
