@@ -4,8 +4,11 @@ import argparse
 from langchain_openai import ChatOpenAI
 from langchain_openai import OpenAIEmbeddings
 from langchain_milvus import Milvus
-import bs4
-from langchain_community.document_loaders import WebBaseLoader, DirectoryLoader, TextLoader
+from langchain_community.document_loaders import (
+    WebBaseLoader,
+    DirectoryLoader,
+    TextLoader,
+)
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain.tools import tool
 from langchain.agents import create_agent
@@ -26,9 +29,6 @@ vector_store = Milvus(
 )
 
 
-
-
-
 # RETRIEVAL WITH RAG AGENT
 
 # Define the tool to fetch docs from the document store
@@ -46,6 +46,7 @@ def retrieve_context(query: str):
 
 
 # RETRIEVAL WITH RAG AGENT
+
 
 def run_agent(query: str):
     # Create the agent
@@ -68,6 +69,7 @@ def run_agent(query: str):
 
 
 # RETRIEVAL WITH RAG CHAINS
+
 
 @dynamic_prompt
 def prompt_with_context(request: ModelRequest) -> str:
@@ -103,40 +105,51 @@ def run_chain(query: str):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run RAG application")
-    parser.add_argument("--mode", choices=["agent", "chain"], default="agent", help="Retrieval mode (default: agent)")
-    parser.add_argument("--query", type=str, help="Query to run (optional, will prompt if not provided)")
-    parser.add_argument("--force-refresh", action="store_true", help="Force re-indexing of documents")
+    parser.add_argument(
+        "--mode",
+        choices=["agent", "chain"],
+        default="agent",
+        help="Retrieval mode (default: agent)",
+    )
+    parser.add_argument(
+        "--query", type=str, help="Query to run (optional, will prompt if not provided)"
+    )
+    parser.add_argument(
+        "--force-refresh", action="store_true", help="Force re-indexing of documents"
+    )
     args = parser.parse_args()
 
     # Handle force refresh
     if args.force_refresh:
         logging.info("Force refresh requested. Dropping collection...")
-        # Access the internal collection and drop it. 
-        # Note: LangChain's Milvus wrapper doesn't expose a direct 'drop_collection' method easily 
+        # Access the internal collection and drop it.
+        # Note: LangChain's Milvus wrapper doesn't expose a direct 'drop_collection' method easily
         # without accessing the internal 'col' or 'client'.
         # However, we can use the pymilvus client directly or try to assume the collection name.
         # The default collection name in LangChain Milvus is 'LangChainCollection'.
-        
+
         # A safer way with the initialized vector_store:
         # vector_store.col is the Collection object in older versions, or we can use the alias.
         # Let's try to just delete the file if it's local, OR use the proper method if available.
         # Since we are using Milvus Lite with a local file, deleting the file is actually the most robust "hard reset".
         # BUT the user asked for "cleanly delete the store" which implies drop_collection.
-        
+
         # Let's try to use the internal client to drop.
         try:
             # This depends on the version of langchain-milvus and pymilvus.
             # Assuming vector_store.client is the MilvusClient or similar.
             if hasattr(vector_store, "client"):
-                 # For MilvusClient (pymilvus v2.4+)
+                # For MilvusClient (pymilvus v2.4+)
                 vector_store.client.drop_collection(vector_store.collection_name)
             elif hasattr(vector_store, "col"):
                 # For older pymilvus Collection object
                 vector_store.col.drop()
-            
+
             logging.info("Collection dropped successfully.")
         except Exception as e:
-            logging.warning(f"Failed to drop collection via client: {e}. Attempting file deletion fallback.")
+            logging.warning(
+                f"Failed to drop collection via client: {e}. Attempting file deletion fallback."
+            )
             if os.path.exists("./milvus_demo.db"):
                 os.remove("./milvus_demo.db")
                 logging.info("Deleted milvus_demo.db file.")
@@ -155,9 +168,7 @@ if __name__ == "__main__":
 
     if should_index:
         logging.info("Indexing documents...")
-        # Load documents from a URL
-        # Only keep post title, headers, and content from the full HTML.
-        bs4_strainer = bs4.SoupStrainer(class_="content")
+        # Load documents from URLs
         # Load URLs from sources.txt
         if os.path.exists("sources.txt"):
             with open("sources.txt", "r") as f:
@@ -165,14 +176,11 @@ if __name__ == "__main__":
         else:
             logging.warning("sources.txt not found. Using default URLs.")
             urls = [
-                "https://muscleandstrength.com/articles/gain-muscle-strength-workouts-limited-time/",
-                "https://muscleandstrength.com/articles/ranking-muscle-building-exercises-beast-least/",
+                "https://benpiper.com/articles/biblical-creation-account-genesis-theory-evolution/",
+                "https://benpiper.com/articles/what-evolution-isnt/",
             ]
 
-        loader = WebBaseLoader(
-            web_paths=tuple(urls),
-            bs_kwargs={"parse_only": bs4_strainer},
-        )
+        loader = WebBaseLoader(web_paths=tuple(urls))
         web_docs = loader.load()
 
         # Load local documents
@@ -180,25 +188,42 @@ if __name__ == "__main__":
         if not os.path.exists("./docs"):
             os.makedirs("./docs")
             logging.info("Created ./docs directory")
-        
+
         # Load .txt and .md files
         local_loader = DirectoryLoader("./docs", glob="**/*.txt", loader_cls=TextLoader)
         local_docs = local_loader.load()
-        
+
         # You can add another loader for .md if needed, or just use glob="**/*" with a generic loader if preferred.
         # For now, let's also try to load .md files using TextLoader (it works for plain text content)
         md_loader = DirectoryLoader("./docs", glob="**/*.md", loader_cls=TextLoader)
         local_docs.extend(md_loader.load())
 
-        # Ensure all local docs have a 'title' field in metadata (required by Milvus schema if previously created with it)
+        # Normalize metadata for all documents to ensure consistent schema
+        # Add missing fields to local docs (description, language)
         for doc in local_docs:
             if "title" not in doc.metadata:
                 doc.metadata["title"] = doc.metadata.get("source", "Local Document")
+            if "description" not in doc.metadata:
+                doc.metadata["description"] = ""
+            if "language" not in doc.metadata:
+                doc.metadata["language"] = "en"
+
+        # Ensure web docs have all fields (they should, but just in case)
+        for doc in web_docs:
+            if "title" not in doc.metadata:
+                doc.metadata["title"] = doc.metadata.get("source", "Web Document")
+            if "description" not in doc.metadata:
+                doc.metadata["description"] = ""
+            if "language" not in doc.metadata:
+                doc.metadata["language"] = "en"
 
         docs = web_docs + local_docs
 
         # assert len(docs) == 6  # Removed assertion as count varies with local files
-        logging.debug("Total characters in first doc: %s", {len(docs[0].page_content) if docs else 0})
+        logging.debug(
+            "Total characters in first doc: %s",
+            {len(docs[0].page_content) if docs else 0},
+        )
         if docs:
             logging.debug(docs[0].page_content[:500])
 
