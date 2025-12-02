@@ -53,11 +53,13 @@ def run_agent(query: str):
     tools = [retrieve_context]
     # If desired, specify custom instructions
     PROMPT = (
-        "You have access to a tool that retrieves context from posts. "
-        "Use the tool to help answer user queries. "
-        "IMPORTANT: When using information from the retrieved documents, you MUST cite the source (Title or URL). "
-        "If the provided documents do not contain information about the query, explicitly state: "
-        "'The provided documents do not contain information about this topic.' and then answer based on your general knowledge if possible."
+        "You are a helpful assistant with access to a specialized knowledge base. "
+        "You MUST use the retrieve_context tool to search for relevant information before answering queries. "
+        "When presenting information from the retrieved documents, you MUST cite the source using the URL or Title from the metadata. "
+        "Format citations like this: (Source: URL or Title). "
+        "If after searching, the retrieved documents do not contain relevant information, state: "
+        "'The retrieved documents do not contain specific information about this topic.' "
+        "In that case, you may supplement with general knowledge, but make it clear which information came from the documents vs. general knowledge."
     )
     agent = create_agent(model, tools, system_prompt=PROMPT)
     logging.info("RAG agent response")
@@ -78,16 +80,19 @@ def prompt_with_context(request: ModelRequest) -> str:
     retrieved_docs = vector_store.similarity_search(last_query, k=6)
 
     docs_content = "\n\n".join(
-        (f"Source: {doc.metadata}\nContent: {doc.page_content}")
+        (
+            f"Source: {doc.metadata.get('source', 'unknown')}\nTitle: {doc.metadata.get('title', 'No title')}\nContent: {doc.page_content}"
+        )
         for doc in retrieved_docs
     )
 
     system_message = (
-        "Use the following context in your response. "
-        "IMPORTANT: When using information from the retrieved documents, you MUST cite the source (Title or URL). "
-        "If the provided documents do not contain information about the query, explicitly state: "
-        "'The provided documents do not contain information about this topic.' and then answer based on your general knowledge if possible."
-        f"\n\n{docs_content}"
+        "You are a helpful assistant. Use the following retrieved documents to answer the user's query. "
+        "IMPORTANT: You MUST cite sources when using information from the documents. "
+        "Format citations like this: (Source: URL or Title). "
+        "If the retrieved documents do not contain relevant information, state: "
+        "'The retrieved documents do not contain specific information about this topic.'\n\n"
+        f"Retrieved Documents:\n\n{docs_content}"
     )
 
     return system_message

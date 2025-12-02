@@ -9,10 +9,37 @@ This repository contains a robust question-answering (Q&A) application built usi
     - **Web URLs**: Loads all URLs listed in `sources.txt` (one per line).
     - **Local Documents**: Indexes all `.txt` and `.md` files from the `docs/` directory.
 - **Source Attribution**: Responses explicitly cite the source (Title/URL) of the information.
-- **Flexible Retrieval Modes**:
-    1. **Agent Mode (Default)**: An AI agent that decides when to search the knowledge base. Best for general conversation.
-    2. **Chain Mode**: Forces a search for every query. Best for strict Q&A.
+- **Flexible Retrieval Modes** (Default: **Agent**):
+    - **Agent Mode** ⭐ **(Default)**: 
+        - The AI agent intelligently decides when to search the knowledge base
+        - More conversational and natural for back-and-forth dialogue
+        - Will skip retrieval for simple greetings, clarifications, or when general knowledge suffices
+        - Best for: General conversation, mixed topics, follow-up questions
+    - **Chain Mode**: 
+        - Automatically retrieves from the knowledge base for every query
+        - Guarantees that responses are grounded in your indexed documents
+        - More deterministic and suitable for strict Q&A scenarios
+        - Best for: Fact-checking, ensuring all answers cite sources, production Q&A systems
 - **Command Line Interface**: Options for non-interactive use, mode selection, and index management.
+
+## Retrieval Modes Explained
+
+### Agent Mode (Default)
+
+The agent has access to a `retrieve_context` tool but decides when to use it based on the query:
+
+- **When it retrieves**: Complex questions about specific topics in your knowledge base
+- **When it doesn't**: Greetings ("hello"), meta questions ("what can you do?"), or requests it can handle with general knowledge
+- **Output style**: More conversational, may blend general knowledge with retrieved facts
+- **Use case**: Interactive sessions where you want natural dialogue
+
+### Chain Mode
+
+Every query triggers a knowledge base search before responding:
+
+- **Always retrieves**: Even for simple queries, the system searches your documents first
+- **Output style**: Responses are strictly based on retrieved documents (or explicitly state when information isn't found)
+- **Use case**: When you need to ensure every answer is grounded in your specific knowledge base
 
 ## Configuring
 
