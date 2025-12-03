@@ -3,6 +3,7 @@ import logging
 import argparse
 from langchain_openai import ChatOpenAI
 from langchain_openai import OpenAIEmbeddings
+from langchain_community.embeddings import OllamaEmbeddings
 from langchain_milvus import Milvus
 from langchain_community.document_loaders import (
     WebBaseLoader,
@@ -17,16 +18,35 @@ from langchain.agents.middleware import dynamic_prompt, ModelRequest
 # Set the chat model
 model = ChatOpenAI(model="gpt-4.1")
 
-# Set the embeddings model
-embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
+# Global variables for embeddings and vector store
+embeddings = None
+vector_store = None
 
-# Initialize the vector store
-# Use a local file for Milvus Lite
-vector_store = Milvus(
-    embedding_function=embeddings,
-    connection_args={"uri": "./milvus_demo.db"},
-    auto_id=True,
-)
+
+def setup_vector_store(provider="openai", ollama_host=None, ollama_model=None):
+    global embeddings, vector_store
+
+    if provider == "openai":
+        embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
+    elif provider == "ollama":
+        if not ollama_host:
+            ollama_host = "http://192.168.88.86:11434"
+        # Ensure host has protocol
+        if not ollama_host.startswith("http"):
+            ollama_host = f"http://{ollama_host}"
+        # Ensure host has port if not present (heuristic)
+        if ":" not in ollama_host.split("//")[1]:
+            ollama_host = f"{ollama_host}:11434"
+
+        embeddings = OllamaEmbeddings(base_url=ollama_host, model=ollama_model)
+
+    # Initialize the vector store
+    # Use a local file for Milvus Lite
+    vector_store = Milvus(
+        embedding_function=embeddings,
+        connection_args={"uri": "./milvus_demo.db"},
+        auto_id=True,
+    )
 
 
 # RETRIEVAL WITH RAG AGENT
@@ -122,7 +142,30 @@ if __name__ == "__main__":
     parser.add_argument(
         "--force-refresh", action="store_true", help="Force re-indexing of documents"
     )
+    parser.add_argument(
+        "--embedding-provider",
+        choices=["openai", "ollama"],
+        default="openai",
+        help="Embedding provider (default: openai)",
+    )
+    parser.add_argument(
+        "--ollama-host",
+        default="192.168.88.86",
+        help="Ollama host (default: 192.168.88.86)",
+    )
+    parser.add_argument(
+        "--ollama-model",
+        default="embeddinggemma",
+        help="Ollama model (default: embeddinggemma)",
+    )
     args = parser.parse_args()
+
+    # Initialize vector store based on arguments
+    setup_vector_store(
+        provider=args.embedding_provider,
+        ollama_host=args.ollama_host,
+        ollama_model=args.ollama_model,
+    )
 
     # Handle force refresh
     if args.force_refresh:

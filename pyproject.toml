@@ -13,4 +13,5 @@ dependencies = [
     "pymilvus>=2.6.3",
     "langchain-milvus>=0.1.0",
     "milvus-lite>=2.4.0",
+    "langchain-ollama>=1.0.0",
 ]
