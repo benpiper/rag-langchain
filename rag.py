@@ -3,6 +3,8 @@ import logging
 import argparse
 import sys
 import yaml
+import json
+from datetime import datetime
 from typing import Optional, List, Tuple, Dict, Any
 from langchain_openai import ChatOpenAI
 from langchain_openai import OpenAIEmbeddings
@@ -218,12 +220,17 @@ def retrieve_context(query: str):
 # RETRIEVAL WITH RAG AGENT
 
 
-def run_agent(query: str):
+def run_agent(query: str, conversation_history: Optional[List[Dict[str, str]]] = None, output_format: str = "plain"):
     """
     Run the RAG agent with tool-based retrieval.
 
     Args:
         query: The user's query string
+        conversation_history: Optional list of previous messages for context
+        output_format: Output format ('plain', 'markdown', 'json')
+
+    Returns:
+        Tuple of (response_text, updated_conversation_history)
 
     Raises:
         ValueError: If query is empty
@@ -234,20 +241,62 @@ def run_agent(query: str):
         raise ValueError("Query cannot be empty")
 
     try:
+        # Initialize conversation history if not provided
+        if conversation_history is None:
+            conversation_history = []
+
         # Create the agent
         tools = [retrieve_context]
 
         logger.info("Creating RAG agent...")
         agent = create_agent(model, tools, system_prompt=config['prompts']['agent_system_prompt'])
 
+        # Build messages including history
+        messages = conversation_history.copy()
+        messages.append({"role": "user", "content": query})
+
         logger.info("Streaming RAG agent response...")
+        response_text = ""
+
+        if output_format == "json":
+            # For JSON output, collect all messages
+            all_messages = []
+
         for event in agent.stream(
-            {"messages": [{"role": "user", "content": query}]},
+            {"messages": messages},
             stream_mode="values",
         ):
-            event["messages"][-1].pretty_print()
+            last_message = event["messages"][-1]
+
+            if output_format == "plain":
+                last_message.pretty_print()
+            elif output_format == "json":
+                all_messages = event["messages"]
+            else:  # markdown
+                if hasattr(last_message, 'content'):
+                    content = last_message.content
+                    if isinstance(content, str) and content:
+                        print(content)
+
+            # Capture response text
+            if hasattr(last_message, 'content'):
+                response_text = last_message.content
+
+        # Update conversation history
+        conversation_history.append({"role": "user", "content": query})
+        conversation_history.append({"role": "assistant", "content": response_text})
+
+        if output_format == "json":
+            output = {
+                "query": query,
+                "response": response_text,
+                "timestamp": datetime.now().isoformat(),
+                "conversation_history": conversation_history
+            }
+            print(json.dumps(output, indent=2))
 
         logger.info("Agent execution completed successfully")
+        return response_text, conversation_history
 
     except Exception as e:
         logger.error(f"Agent execution failed: {e}")
@@ -303,12 +352,17 @@ def prompt_with_context(request: ModelRequest) -> str:
         raise RuntimeError(f"Context injection failed: {e}")
 
 
-def run_chain(query: str):
+def run_chain(query: str, conversation_history: Optional[List[Dict[str, str]]] = None, output_format: str = "plain"):
     """
     Run the RAG chain with middleware-based retrieval.
 
     Args:
         query: The user's query string
+        conversation_history: Optional list of previous messages for context
+        output_format: Output format ('plain', 'markdown', 'json')
+
+    Returns:
+        Tuple of (response_text, updated_conversation_history)
 
     Raises:
         ValueError: If query is empty
@@ -319,21 +373,238 @@ def run_chain(query: str):
         raise ValueError("Query cannot be empty")
 
     try:
+        # Initialize conversation history if not provided
+        if conversation_history is None:
+            conversation_history = []
+
         logger.info("Creating RAG chain with middleware...")
         agent = create_agent(model, tools=[], middleware=[prompt_with_context])
 
+        # Build messages including history
+        messages = conversation_history.copy()
+        messages.append({"role": "user", "content": query})
+
         logger.info("Streaming RAG chain response...")
+        response_text = ""
+
+        if output_format == "json":
+            all_messages = []
+
         for step in agent.stream(
-            {"messages": [{"role": "user", "content": query}]},
+            {"messages": messages},
             stream_mode="values",
         ):
-            step["messages"][-1].pretty_print()
+            last_message = step["messages"][-1]
+
+            if output_format == "plain":
+                last_message.pretty_print()
+            elif output_format == "json":
+                all_messages = step["messages"]
+            else:  # markdown
+                if hasattr(last_message, 'content'):
+                    content = last_message.content
+                    if isinstance(content, str) and content:
+                        print(content)
+
+            # Capture response text
+            if hasattr(last_message, 'content'):
+                response_text = last_message.content
+
+        # Update conversation history
+        conversation_history.append({"role": "user", "content": query})
+        conversation_history.append({"role": "assistant", "content": response_text})
+
+        if output_format == "json":
+            output = {
+                "query": query,
+                "response": response_text,
+                "timestamp": datetime.now().isoformat(),
+                "conversation_history": conversation_history
+            }
+            print(json.dumps(output, indent=2))
 
         logger.info("Chain execution completed successfully")
+        return response_text, conversation_history
 
     except Exception as e:
         logger.error(f"Chain execution failed: {e}")
         raise RuntimeError(f"Failed to run chain: {e}")
+
+
+def save_conversation(conversation_history: List[Dict[str, str]], filepath: str = None) -> str:
+    """
+    Save conversation history to a JSON file.
+
+    Args:
+        conversation_history: List of conversation messages
+        filepath: Optional path to save file (auto-generated if not provided)
+
+    Returns:
+        Path to the saved file
+
+    Raises:
+        IOError: If file cannot be written
+    """
+    if not filepath:
+        # Create conversations directory if it doesn't exist
+        conversations_dir = "conversations"
+        if not os.path.exists(conversations_dir):
+            os.makedirs(conversations_dir)
+
+        # Generate filename with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filepath = os.path.join(conversations_dir, f"conversation_{timestamp}.json")
+
+    try:
+        conversation_data = {
+            "timestamp": datetime.now().isoformat(),
+            "messages": conversation_history
+        }
+
+        with open(filepath, 'w') as f:
+            json.dump(conversation_data, f, indent=2)
+
+        logger.info(f"Conversation saved to {filepath}")
+        return filepath
+
+    except Exception as e:
+        logger.error(f"Failed to save conversation: {e}")
+        raise IOError(f"Failed to save conversation: {e}")
+
+
+def load_conversation(filepath: str) -> List[Dict[str, str]]:
+    """
+    Load conversation history from a JSON file.
+
+    Args:
+        filepath: Path to the conversation file
+
+    Returns:
+        List of conversation messages
+
+    Raises:
+        FileNotFoundError: If file doesn't exist
+        json.JSONDecodeError: If file is not valid JSON
+    """
+    try:
+        with open(filepath, 'r') as f:
+            conversation_data = json.load(f)
+
+        messages = conversation_data.get("messages", [])
+        logger.info(f"Loaded conversation with {len(messages)} messages from {filepath}")
+        return messages
+
+    except FileNotFoundError:
+        logger.error(f"Conversation file not found: {filepath}")
+        raise
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in conversation file: {e}")
+        raise
+
+
+def run_interactive_mode(mode: str = "agent", output_format: str = "plain"):
+    """
+    Run the application in interactive mode with conversation history.
+
+    Args:
+        mode: 'agent' or 'chain'
+        output_format: Output format ('plain', 'markdown', 'json')
+
+    Raises:
+        RuntimeError: If execution fails
+    """
+    conversation_history = []
+
+    print("\n" + "="*60)
+    print("RAG Interactive Mode")
+    print("="*60)
+    print(f"Mode: {mode.upper()}")
+    print(f"Output format: {output_format}")
+    print("\nCommands:")
+    print("  /help     - Show this help message")
+    print("  /history  - Show conversation history")
+    print("  /save     - Save conversation to file")
+    print("  /load     - Load conversation from file")
+    print("  /clear    - Clear conversation history")
+    print("  /exit     - Exit interactive mode")
+    print("="*60 + "\n")
+
+    while True:
+        try:
+            query = input("\n> ").strip()
+
+            if not query:
+                continue
+
+            # Handle commands
+            if query == "/exit":
+                print("\nExiting interactive mode...")
+                break
+
+            elif query == "/help":
+                print("\nCommands:")
+                print("  /help     - Show this help message")
+                print("  /history  - Show conversation history")
+                print("  /save     - Save conversation to file")
+                print("  /load     - Load conversation from file")
+                print("  /clear    - Clear conversation history")
+                print("  /exit     - Exit interactive mode")
+                continue
+
+            elif query == "/history":
+                if not conversation_history:
+                    print("\nNo conversation history yet.")
+                else:
+                    print(f"\nConversation history ({len(conversation_history)} messages):")
+                    for i, msg in enumerate(conversation_history, 1):
+                        role = msg.get("role", "unknown")
+                        content = msg.get("content", "")
+                        preview = content[:100] + "..." if len(content) > 100 else content
+                        print(f"{i}. [{role}]: {preview}")
+                continue
+
+            elif query == "/save":
+                if not conversation_history:
+                    print("\nNo conversation to save.")
+                else:
+                    try:
+                        filepath = save_conversation(conversation_history)
+                        print(f"\n✓ Conversation saved to: {filepath}")
+                    except Exception as e:
+                        print(f"\n✗ Failed to save conversation: {e}")
+                continue
+
+            elif query == "/load":
+                filepath = input("Enter conversation file path: ").strip()
+                try:
+                    conversation_history = load_conversation(filepath)
+                    print(f"\n✓ Loaded {len(conversation_history)} messages")
+                except Exception as e:
+                    print(f"\n✗ Failed to load conversation: {e}")
+                continue
+
+            elif query == "/clear":
+                conversation_history = []
+                print("\n✓ Conversation history cleared")
+                continue
+
+            # Run query
+            try:
+                if mode == "agent":
+                    response_text, conversation_history = run_agent(
+                        query, conversation_history, output_format
+                    )
+                else:
+                    response_text, conversation_history = run_chain(
+                        query, conversation_history, output_format
+                    )
+            except Exception as e:
+                print(f"\n✗ Error: {e}")
+                logger.error(f"Query execution failed: {e}")
+
+        except (EOFError, KeyboardInterrupt):
+            print("\n\nExiting interactive mode...")
+            break
 
 
 if __name__ == "__main__":
@@ -345,7 +616,23 @@ if __name__ == "__main__":
         help=f"Retrieval mode (default: {config['defaults']['mode']})",
     )
     parser.add_argument(
-        "--query", type=str, help="Query to run (optional, will prompt if not provided)"
+        "--query", type=str, help="Query to run (optional, will start interactive mode if not provided)"
+    )
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Start interactive mode with conversation history"
+    )
+    parser.add_argument(
+        "--output-format",
+        choices=["plain", "markdown", "json"],
+        default="plain",
+        help="Output format (default: plain)"
+    )
+    parser.add_argument(
+        "--load-conversation",
+        type=str,
+        help="Load conversation history from file"
     )
     parser.add_argument(
         "--force-refresh",
@@ -569,34 +856,53 @@ if __name__ == "__main__":
     else:
         logger.info("Vector store already contains data. Skipping indexing.")
 
-    # Get query from user
-    if args.query:
-        query = args.query
-    else:
+    # Load conversation history if specified
+    conversation_history = []
+    if args.load_conversation:
         try:
-            print("\nEnter your query: ")
-            query = input().strip()
-        except (EOFError, KeyboardInterrupt):
-            logger.info("\nQuery input cancelled by user")
-            sys.exit(0)
-
-    if not query:
-        logger.error("Query cannot be empty")
-        sys.exit(1)
-
-    # Run the selected mode
-    try:
-        if args.mode == "agent":
-            run_agent(query)
-        elif args.mode == "chain":
-            run_chain(query)
-        else:
-            logger.error(f"Invalid mode: {args.mode}")
+            conversation_history = load_conversation(args.load_conversation)
+            logger.info(f"Loaded conversation history with {len(conversation_history)} messages")
+        except Exception as e:
+            logger.error(f"Failed to load conversation: {e}")
             sys.exit(1)
 
-    except KeyboardInterrupt:
-        logger.info("\nExecution interrupted by user")
-        sys.exit(0)
-    except Exception as e:
-        logger.error(f"Execution failed: {e}")
-        sys.exit(1)
+    # Determine mode of operation
+    if args.interactive or (not args.query and not args.load_conversation):
+        # Interactive mode
+        try:
+            run_interactive_mode(mode=args.mode, output_format=args.output_format)
+        except KeyboardInterrupt:
+            logger.info("\nExecution interrupted by user")
+            sys.exit(0)
+        except Exception as e:
+            logger.error(f"Interactive mode failed: {e}")
+            sys.exit(1)
+
+    else:
+        # Single query mode
+        query = args.query
+
+        if not query:
+            logger.error("Query cannot be empty in single query mode")
+            sys.exit(1)
+
+        # Run the selected mode
+        try:
+            if args.mode == "agent":
+                response_text, conversation_history = run_agent(
+                    query, conversation_history, args.output_format
+                )
+            elif args.mode == "chain":
+                response_text, conversation_history = run_chain(
+                    query, conversation_history, args.output_format
+                )
+            else:
+                logger.error(f"Invalid mode: {args.mode}")
+                sys.exit(1)
+
+        except KeyboardInterrupt:
+            logger.info("\nExecution interrupted by user")
+            sys.exit(0)
+        except Exception as e:
+            logger.error(f"Execution failed: {e}")
+            sys.exit(1)

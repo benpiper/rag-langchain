@@ -4,13 +4,23 @@ This repository contains a robust question-answering (Q&A) application built usi
 
 ## Features
 
+### Core Features
 - **Configuration-Driven**: Centralized YAML configuration with support for local overrides
-- **Data Persistence**: Uses **Milvus Lite** to store document embeddings locally (`milvus_demo.db`), avoiding redundant indexing.
+- **Data Persistence**: Uses **Milvus Lite** to store document embeddings locally (`milvus_demo.db`), avoiding redundant indexing
 - **Multi-Source Indexing**: **Both sources are indexed together**:
-    - **Web URLs**: Loads all URLs listed in `sources.txt` (one per line).
-    - **Local Documents**: Indexes all `.txt` and `.md` files from the `docs/` directory.
+    - **Web URLs**: Loads all URLs listed in `sources.txt` (one per line)
+    - **Local Documents**: Indexes all `.txt` and `.md` files from the `docs/` directory
 - **Multiple Embedding Providers**: Support for OpenAI and Ollama embeddings
-- **Source Attribution**: Responses explicitly cite the source (Title/URL) of the information.
+- **Source Attribution**: Responses explicitly cite the source (Title/URL) of the information
+
+### User Experience
+- **Interactive Mode**: Multi-turn conversations with full context awareness
+- **Conversation History**: Save, load, and resume conversations
+- **Multiple Output Formats**: Plain text, Markdown, or JSON
+- **Streaming Responses**: Real-time response streaming for better UX
+- **Built-in Commands**: Help, history viewing, conversation management
+
+### Retrieval Modes
 - **Flexible Retrieval Modes** (Default: **Agent**):
     - **Agent Mode** ⭐ **(Default)**: 
         - The AI agent intelligently decides when to search the knowledge base
@@ -121,10 +131,37 @@ uv run --env-file .env -- rag.py --embedding-provider ollama --ollama-host 192.1
 
 ## Running
 
-### Basic Usage
-Run the application in interactive mode (Agent default):
+### Interactive Mode (Recommended)
+
+Run the application in interactive mode with conversation history:
+```bash
+uv run --env-file .env -- rag.py --interactive
+```
+
+Or simply run without a query to start interactive mode:
 ```bash
 uv run --env-file .env -- rag.py
+```
+
+**Interactive Mode Commands:**
+- `/help` - Show available commands
+- `/history` - Display conversation history
+- `/save` - Save conversation to file
+- `/load` - Load conversation from file
+- `/clear` - Clear conversation history
+- `/exit` - Exit interactive mode
+
+**Features:**
+- ✅ Multi-turn conversations with context
+- ✅ Persistent conversation history
+- ✅ Save/load conversations
+- ✅ Real-time streaming responses
+
+### Single Query Mode
+
+Run a single query and exit:
+```bash
+uv run --env-file .env -- rag.py --query "Your question here"
 ```
 
 ### Command Line Options
@@ -133,6 +170,9 @@ uv run --env-file .env -- rag.py
 | :--- | :--- | :--- |
 | `--mode {agent,chain}` | Choose retrieval mode | `agent` |
 | `--query QUERY` | Run a single query and exit | Interactive mode |
+| `--interactive` | Explicitly start interactive mode | Auto if no query |
+| `--output-format {plain,markdown,json}` | Output format | `plain` |
+| `--load-conversation FILE` | Load conversation history from file | None |
 | `--force-refresh` | Delete the database and re-index all sources | `false` |
 | `--embedding-provider {openai,ollama}` | Embedding provider to use | `openai` |
 | `--ollama-host HOST` | Ollama server host | `192.168.88.86` |
@@ -142,15 +182,98 @@ uv run --env-file .env -- rag.py
 
 ### Examples
 
+**Start interactive conversation:**
+```bash
+uv run --env-file .env -- rag.py --interactive
+```
+
 **Run a single query in Chain mode:**
 ```bash
 uv run --env-file .env -- rag.py --mode chain --query "Explain common descent"
+```
+
+**Get JSON output:**
+```bash
+uv run --env-file .env -- rag.py --query "What is evolution?" --output-format json
+```
+
+**Continue a previous conversation:**
+```bash
+uv run --env-file .env -- rag.py --load-conversation conversations/conversation_20240101_120000.json --interactive
 ```
 
 **Update the index after changing sources:**
 ```bash
 uv run --env-file .env -- rag.py --force-refresh
 ```
+
+## Interactive Mode & Conversations
+
+### Multi-Turn Conversations
+
+The interactive mode maintains conversation history, allowing the AI to reference previous questions and answers:
+
+```
+> What is natural selection?
+[AI explains natural selection with citations]
+
+> Can you give me an example?
+[AI provides example, understanding "you" refers to the previous topic]
+
+> How does this relate to evolution?
+[AI connects the dots using conversation context]
+```
+
+### Conversation Management
+
+**Save conversations for later:**
+```
+> /save
+✓ Conversation saved to: conversations/conversation_20240315_143022.json
+```
+
+**Load previous conversations:**
+```bash
+uv run --env-file .env -- rag.py --load-conversation conversations/conversation_20240315_143022.json
+```
+
+Or within interactive mode:
+```
+> /load
+Enter conversation file path: conversations/conversation_20240315_143022.json
+✓ Loaded 10 messages
+```
+
+**View conversation history:**
+```
+> /history
+Conversation history (10 messages):
+1. [user]: What is natural selection?
+2. [assistant]: Natural selection is the process...
+...
+```
+
+### Output Formats
+
+**Plain Text (Default):**
+Human-readable output with formatted text.
+
+**Markdown:**
+```bash
+uv run --env-file .env -- rag.py --output-format markdown --query "Explain evolution"
+```
+
+**JSON:**
+Structured output for programmatic use:
+```bash
+uv run --env-file .env -- rag.py --output-format json --query "What is DNA?"
+```
+
+JSON output includes:
+- Query text
+- Response text
+- Timestamp
+- Full conversation history
 
 ## Common Configuration Scenarios
 
@@ -234,6 +357,8 @@ rag-langchain/
 ├── docs/                      # Local documents directory
 │   ├── *.txt                 # Text files to index
 │   └── *.md                  # Markdown files to index
+├── conversations/            # Saved conversation history (git-ignored)
+│   └── *.json               # Conversation files
 ├── milvus_demo.db            # Vector database (auto-created)
 ├── rag_app.log              # Application logs
 ├── .env                     # API keys (git-ignored)
@@ -342,5 +467,15 @@ All configurable settings in [config.yaml](config.yaml):
 - `mode`: agent or chain
 - `embedding_provider`: openai or ollama
 - `force_refresh`: true or false
+- `output_format`: plain, markdown, or json
+- `interactive`: true or false
+
+### User Experience
+- `conversations_dir`: Directory for saved conversations
+- `auto_save_conversations`: Auto-save on exit
+- `max_history_length`: Maximum conversation turns to keep
+- `show_timestamps`: Show timestamps in output
+- `show_sources`: Show source citations
+- `color_output`: Enable colored terminal output
 
 

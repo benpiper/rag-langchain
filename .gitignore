@@ -19,3 +19,6 @@ docs/
 config.local.yaml
 config.local.yml
 config.yaml
+
+# Conversation history
+conversations/
