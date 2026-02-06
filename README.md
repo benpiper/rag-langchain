@@ -4,10 +4,12 @@ This repository contains a robust question-answering (Q&A) application built usi
 
 ## Features
 
+- **Configuration-Driven**: Centralized YAML configuration with support for local overrides
 - **Data Persistence**: Uses **Milvus Lite** to store document embeddings locally (`milvus_demo.db`), avoiding redundant indexing.
 - **Multi-Source Indexing**: **Both sources are indexed together**:
     - **Web URLs**: Loads all URLs listed in `sources.txt` (one per line).
     - **Local Documents**: Indexes all `.txt` and `.md` files from the `docs/` directory.
+- **Multiple Embedding Providers**: Support for OpenAI and Ollama embeddings
 - **Source Attribution**: Responses explicitly cite the source (Title/URL) of the information.
 - **Flexible Retrieval Modes** (Default: **Agent**):
     - **Agent Mode** ⭐ **(Default)**: 
@@ -41,7 +43,9 @@ Every query triggers a knowledge base search before responding:
 - **Output style**: Responses are strictly based on retrieved documents (or explicitly state when information isn't found)
 - **Use case**: When you need to ensure every answer is grounded in your specific knowledge base
 
-## Configuring
+## Configuration
+
+### Quick Start Configuration
 
 1. **API Key**: Put your OpenAI API key in `.env`:
    ```bash
@@ -51,6 +55,69 @@ Every query triggers a knowledge base search before responding:
 2. **Web Sources**: Add URLs to `sources.txt` (one per line).
 
 3. **Local Documents**: Place text or markdown files in the `docs/` directory.
+
+### Advanced Configuration
+
+The application now supports comprehensive configuration via YAML files:
+
+#### Main Configuration File: `config.yaml`
+
+All application settings are centralized in [config.yaml](config.yaml), including:
+
+- **Logging**: Log level, format, and output file
+- **LLM Settings**: Model name, temperature, max tokens
+- **Embeddings**: Provider selection (OpenAI/Ollama) and model configuration
+- **Vector Store**: Database path and Milvus settings
+- **Document Processing**: Chunk size, overlap, supported file formats
+- **Retrieval**: Number of documents to retrieve (k value)
+- **System Prompts**: Customizable prompts for agent and chain modes
+
+#### Local Configuration Overrides: `config.local.yaml`
+
+Create a `config.local.yaml` file to override settings without modifying the main config:
+
+```yaml
+# Example: Use a different model
+llm:
+  model: gpt-4o
+  temperature: 0.5
+
+# Example: Retrieve more documents
+retrieval:
+  k: 10
+
+# Example: Enable debug logging
+logging:
+  level: DEBUG
+```
+
+**Note**: `config.local.yaml` is git-ignored, so your personal settings won't be committed.
+
+#### Configuration Precedence
+
+Settings are applied in this order (later overrides earlier):
+1. `config.yaml` (base configuration)
+2. `config.local.yaml` (local overrides)
+3. Command-line arguments (highest priority)
+
+### Ollama Configuration
+
+To use Ollama for embeddings instead of OpenAI:
+
+**Option 1: Via config.local.yaml**
+```yaml
+embeddings:
+  provider: ollama
+  ollama:
+    host: 192.168.88.86
+    port: 11434
+    model: embeddinggemma
+```
+
+**Option 2: Via command-line**
+```bash
+uv run --env-file .env -- rag.py --embedding-provider ollama --ollama-host 192.168.88.86 --ollama-model embeddinggemma
+```
 
 ## Running
 
@@ -62,11 +129,16 @@ uv run --env-file .env -- rag.py
 
 ### Command Line Options
 
-| Argument | Description | Example |
+| Argument | Description | Default (from config.yaml) |
 | :--- | :--- | :--- |
-| `--mode` | Choose retrieval mode (`agent` or `chain`). | `--mode chain` |
-| `--query` | Run a single query and exit. | `--query "What is evolution?"` |
-| `--force-refresh` | Delete the database and re-index all sources. | `--force-refresh` |
+| `--mode {agent,chain}` | Choose retrieval mode | `agent` |
+| `--query QUERY` | Run a single query and exit | Interactive mode |
+| `--force-refresh` | Delete the database and re-index all sources | `false` |
+| `--embedding-provider {openai,ollama}` | Embedding provider to use | `openai` |
+| `--ollama-host HOST` | Ollama server host | `192.168.88.86` |
+| `--ollama-model MODEL` | Ollama model name | `embeddinggemma` |
+
+**Note**: Command-line arguments override settings in `config.yaml` and `config.local.yaml`.
 
 ### Examples
 
@@ -78,6 +150,94 @@ uv run --env-file .env -- rag.py --mode chain --query "Explain common descent"
 **Update the index after changing sources:**
 ```bash
 uv run --env-file .env -- rag.py --force-refresh
+```
+
+## Common Configuration Scenarios
+
+### Scenario 1: Adjust Retrieval Quality
+
+Retrieve more documents for better context (may increase response time):
+```yaml
+# config.local.yaml
+retrieval:
+  k: 10  # Default is 6
+```
+
+### Scenario 2: Optimize for Speed
+
+Use smaller chunks and retrieve fewer documents:
+```yaml
+# config.local.yaml
+document_processing:
+  chunk_size: 500
+  chunk_overlap: 100
+
+retrieval:
+  k: 3
+```
+
+### Scenario 3: Better for Long Documents
+
+Increase chunk size to preserve more context:
+```yaml
+# config.local.yaml
+document_processing:
+  chunk_size: 2000
+  chunk_overlap: 400
+```
+
+### Scenario 4: Custom System Prompts
+
+Modify how the AI responds by editing prompts in [config.yaml](config.yaml):
+```yaml
+prompts:
+  agent_system_prompt: |
+    You are a specialized assistant for biblical apologetics.
+    Always cite sources and be respectful of different viewpoints.
+    # ... rest of prompt
+```
+
+### Scenario 5: Use Different Models
+
+Switch to a different LLM or embedding model:
+```yaml
+# config.local.yaml
+llm:
+  model: gpt-4o
+  temperature: 0.3  # More deterministic
+
+embeddings:
+  openai:
+    model: text-embedding-3-small  # Faster, cheaper
+```
+
+### Scenario 6: Debug Mode
+
+Enable detailed logging for troubleshooting:
+```yaml
+# config.local.yaml
+logging:
+  level: DEBUG
+```
+
+Check the logs in `rag_app.log` for detailed execution traces.
+
+## Project Structure
+
+```
+rag-langchain/
+├── rag.py                      # Main application
+├── config.yaml                 # Main configuration file
+├── config.local.yaml.example   # Example local config overrides
+├── config.local.yaml          # Your local overrides (git-ignored)
+├── sources.txt                # Web URLs to index (one per line)
+├── docs/                      # Local documents directory
+│   ├── *.txt                 # Text files to index
+│   └── *.md                  # Markdown files to index
+├── milvus_demo.db            # Vector database (auto-created)
+├── rag_app.log              # Application logs
+├── .env                     # API keys (git-ignored)
+└── pyproject.toml          # Python dependencies
 ```
 
 ## How Indexing Works
@@ -111,5 +271,76 @@ A: Delete the database and let it rebuild:
 rm -f milvus_demo.db
 uv run --env-file .env -- rag.py
 ```
+
+**Q: Configuration not taking effect?**
+
+A: Check the configuration precedence:
+1. Verify your `config.local.yaml` syntax is valid YAML
+2. Remember command-line args override config files
+3. Check `rag_app.log` for config loading errors
+4. Try running with `--help` to see current defaults
+
+**Q: Where are my configuration files?**
+
+A:
+- `config.yaml` - Main configuration (committed to git)
+- `config.local.yaml` - Your personal overrides (git-ignored, create if needed)
+- `config.local.yaml.example` - Example override file for reference
+
+**Q: Ollama connection errors?**
+
+A: Verify Ollama settings:
+```bash
+# Test if Ollama is running
+curl http://192.168.88.86:11434/api/tags
+
+# Check your config
+cat config.yaml | grep -A 5 "ollama:"
+```
+
+## Configuration Reference
+
+All configurable settings in [config.yaml](config.yaml):
+
+### Logging
+- `level`: DEBUG, INFO, WARNING, ERROR, CRITICAL
+- `log_file`: Path to log file
+- `format`: Log message format
+
+### LLM (Language Model)
+- `model`: Model name (e.g., gpt-4.1, gpt-4o)
+- `temperature`: Creativity/randomness (0.0-1.0)
+- `max_tokens`: Maximum response length
+
+### Embeddings
+- `provider`: openai or ollama
+- `openai.model`: OpenAI embedding model
+- `ollama.host`: Ollama server host
+- `ollama.port`: Ollama server port
+- `ollama.model`: Ollama embedding model
+
+### Vector Store
+- `milvus.uri`: Database file path
+- `milvus.auto_id`: Auto-generate document IDs
+
+### Document Processing
+- `chunk_size`: Characters per chunk
+- `chunk_overlap`: Overlap between chunks
+- `sources_file`: Path to URLs file
+- `local_docs_dir`: Local documents directory
+- `supported_formats`: File glob patterns to index
+
+### Retrieval
+- `k`: Number of documents to retrieve
+- `test_k`: Documents for store existence check
+
+### Prompts
+- `agent_system_prompt`: Prompt for agent mode
+- `chain_system_prompt`: Prompt for chain mode
+
+### Defaults
+- `mode`: agent or chain
+- `embedding_provider`: openai or ollama
+- `force_refresh`: true or false
 
 
