@@ -16,4 +16,13 @@ dependencies = [
     "mcp>=1.0.0",
     "langchain-ollama>=1.0.0",
     "pyyaml>=6.0.0",
+    "pypdf>=4.0.0",
+    "docx2txt>=0.8",
+    "pandas>=2.0.0",
+    "rank-bm25>=0.2.2",
+    "streamlit>=1.30.0",
+    "ragas>=0.1.0",
+    "sentence-transformers>=2.3.0",
+    "flashrank>=0.2.0",
+    "onnxruntime<1.24.0",
 ]
