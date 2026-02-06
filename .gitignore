@@ -14,3 +14,8 @@ wheels/
 docs/
 
 *.log
+
+# Local configuration overrides
+config.local.yaml
+config.local.yml
+config.yaml

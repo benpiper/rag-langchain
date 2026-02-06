@@ -2205,6 +2205,7 @@ dependencies = [
     { name = "mcp" },
     { name = "milvus-lite" },
     { name = "pymilvus" },
+    { name = "pyyaml" },
 ]
 
 [package.metadata]
@@ -2219,6 +2220,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.0.0" },
     { name = "milvus-lite", specifier = ">=2.4.0" },
     { name = "pymilvus", specifier = ">=2.6.3" },
+    { name = "pyyaml", specifier = ">=6.0.0" },
 ]
 
 [[package]]

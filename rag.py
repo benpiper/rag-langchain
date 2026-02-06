@@ -2,7 +2,8 @@ import os
 import logging
 import argparse
 import sys
-from typing import Optional, List, Tuple
+import yaml
+from typing import Optional, List, Tuple, Dict, Any
 from langchain_openai import ChatOpenAI
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.embeddings import OllamaEmbeddings
@@ -17,19 +18,80 @@ from langchain.tools import tool
 from langchain.agents import create_agent
 from langchain.agents.middleware import dynamic_prompt, ModelRequest
 
+
+def load_config(config_path: str = "config.yaml", local_override: str = "config.local.yaml") -> Dict[str, Any]:
+    """
+    Load configuration from YAML file with optional local overrides.
+
+    Args:
+        config_path: Path to the main configuration file
+        local_override: Path to local override configuration file
+
+    Returns:
+        Dictionary containing merged configuration
+
+    Raises:
+        FileNotFoundError: If main config file doesn't exist
+        yaml.YAMLError: If YAML parsing fails
+    """
+    # Load main config
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Configuration file not found: {config_path}")
+
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+
+    # Load local overrides if they exist
+    if os.path.exists(local_override):
+        with open(local_override, 'r') as f:
+            local_config = yaml.safe_load(f)
+            if local_config:
+                # Deep merge - simple version (overwrites nested dicts)
+                config = deep_merge(config, local_config)
+
+    return config
+
+
+def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Deep merge two dictionaries, with override taking precedence.
+
+    Args:
+        base: Base dictionary
+        override: Override dictionary
+
+    Returns:
+        Merged dictionary
+    """
+    result = base.copy()
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+# Load configuration
+config = load_config()
+
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=getattr(logging, config['logging']['level']),
+    format=config['logging']['format'],
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler('rag_app.log')
+        logging.FileHandler(config['logging']['log_file'])
     ]
 )
 logger = logging.getLogger(__name__)
 
 # Set the chat model
-model = ChatOpenAI(model="gpt-4.1")
+model = ChatOpenAI(
+    model=config['llm']['model'],
+    temperature=config['llm'].get('temperature', 0.7),
+    max_tokens=config['llm'].get('max_tokens')
+)
 
 # Global variables for embeddings and vector store
 embeddings = None
@@ -55,7 +117,7 @@ def setup_vector_store(provider="openai", ollama_host=None, ollama_model=None):
         if provider == "openai":
             logger.info("Initializing OpenAI embeddings...")
             try:
-                embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
+                embeddings = OpenAIEmbeddings(model=config['embeddings']['openai']['model'])
             except Exception as e:
                 logger.error(f"Failed to initialize OpenAI embeddings: {e}")
                 raise RuntimeError(
@@ -64,19 +126,20 @@ def setup_vector_store(provider="openai", ollama_host=None, ollama_model=None):
 
         elif provider == "ollama":
             if not ollama_model:
-                raise ValueError("ollama_model is required when using ollama provider")
+                ollama_model = config['embeddings']['ollama']['model']
 
             if not ollama_host:
-                ollama_host = "http://192.168.88.86:11434"
+                ollama_host = config['embeddings']['ollama']['host']
 
             # Ensure host has protocol
             if not ollama_host.startswith("http"):
                 ollama_host = f"http://{ollama_host}"
 
             # Ensure host has port if not present (heuristic)
+            default_port = config['embeddings']['ollama']['port']
             try:
                 if ":" not in ollama_host.split("//")[1]:
-                    ollama_host = f"{ollama_host}:11434"
+                    ollama_host = f"{ollama_host}:{default_port}"
             except IndexError:
                 logger.error(f"Invalid Ollama host format: {ollama_host}")
                 raise ValueError(f"Invalid Ollama host format: {ollama_host}")
@@ -97,8 +160,8 @@ def setup_vector_store(provider="openai", ollama_host=None, ollama_model=None):
         try:
             vector_store = Milvus(
                 embedding_function=embeddings,
-                connection_args={"uri": "./milvus_demo.db"},
-                auto_id=True,
+                connection_args={"uri": config['vector_store']['milvus']['uri']},
+                auto_id=config['vector_store']['milvus']['auto_id'],
             )
             logger.info("Vector store initialized successfully")
         except Exception as e:
@@ -139,7 +202,7 @@ def retrieve_context(query: str):
 
     try:
         logger.debug(f"Searching for: {query}")
-        retrieved_docs = vector_store.similarity_search(query, k=6)
+        retrieved_docs = vector_store.similarity_search(query, k=config['retrieval']['k'])
         logger.info(f"Retrieved {len(retrieved_docs)} documents")
 
         serialized = "\n\n".join(
@@ -173,19 +236,9 @@ def run_agent(query: str):
     try:
         # Create the agent
         tools = [retrieve_context]
-        # If desired, specify custom instructions
-        PROMPT = (
-            "You are a helpful assistant with access to a specialized knowledge base. "
-            "You MUST use the retrieve_context tool to search for relevant information before answering queries. "
-            "When presenting information from the retrieved documents, you MUST cite the source using the URL or Title from the metadata. "
-            "Format citations like this: (Source: URL or Title). "
-            "If after searching, the retrieved documents do not contain relevant information, state: "
-            "'The retrieved documents do not contain specific information about this topic.' "
-            "In that case, you may supplement with general knowledge, but make it clear which information came from the documents vs. general knowledge."
-        )
 
         logger.info("Creating RAG agent...")
-        agent = create_agent(model, tools, system_prompt=PROMPT)
+        agent = create_agent(model, tools, system_prompt=config['prompts']['agent_system_prompt'])
 
         logger.info("Streaming RAG agent response...")
         for event in agent.stream(
@@ -226,7 +279,7 @@ def prompt_with_context(request: ModelRequest) -> str:
         last_query = request.state["messages"][-1].text
         logger.debug(f"Retrieving context for: {last_query}")
 
-        retrieved_docs = vector_store.similarity_search(last_query, k=6)
+        retrieved_docs = vector_store.similarity_search(last_query, k=config['retrieval']['k'])
         logger.info(f"Retrieved {len(retrieved_docs)} documents for context")
 
         docs_content = "\n\n".join(
@@ -239,11 +292,7 @@ def prompt_with_context(request: ModelRequest) -> str:
         )
 
         system_message = (
-            "You are a helpful assistant. Use the following retrieved documents to answer the user's query. "
-            "IMPORTANT: You MUST cite sources when using information from the documents. "
-            "Format citations like this: (Source: URL or Title). "
-            "If the retrieved documents do not contain relevant information, state: "
-            "'The retrieved documents do not contain specific information about this topic.'\n\n"
+            f"{config['prompts']['chain_system_prompt']}\n\n"
             f"Retrieved Documents:\n\n{docs_content}"
         )
 
@@ -292,30 +341,33 @@ if __name__ == "__main__":
     parser.add_argument(
         "--mode",
         choices=["agent", "chain"],
-        default="agent",
-        help="Retrieval mode (default: agent)",
+        default=config['defaults']['mode'],
+        help=f"Retrieval mode (default: {config['defaults']['mode']})",
     )
     parser.add_argument(
         "--query", type=str, help="Query to run (optional, will prompt if not provided)"
     )
     parser.add_argument(
-        "--force-refresh", action="store_true", help="Force re-indexing of documents"
+        "--force-refresh",
+        action="store_true",
+        default=config['defaults']['force_refresh'],
+        help="Force re-indexing of documents"
     )
     parser.add_argument(
         "--embedding-provider",
         choices=["openai", "ollama"],
-        default="openai",
-        help="Embedding provider (default: openai)",
+        default=config['defaults']['embedding_provider'],
+        help=f"Embedding provider (default: {config['defaults']['embedding_provider']})",
     )
     parser.add_argument(
         "--ollama-host",
-        default="192.168.88.86",
-        help="Ollama host (default: 192.168.88.86)",
+        default=config['embeddings']['ollama']['host'],
+        help=f"Ollama host (default: {config['embeddings']['ollama']['host']})",
     )
     parser.add_argument(
         "--ollama-model",
-        default="embeddinggemma",
-        help="Ollama model (default: embeddinggemma)",
+        default=config['embeddings']['ollama']['model'],
+        help=f"Ollama model (default: {config['embeddings']['ollama']['model']})",
     )
     args = parser.parse_args()
 
@@ -357,7 +409,7 @@ if __name__ == "__main__":
 
             # Fallback: delete the database file
             if not dropped:
-                db_path = "./milvus_demo.db"
+                db_path = config['vector_store']['milvus']['uri']
                 if os.path.exists(db_path):
                     try:
                         os.remove(db_path)
@@ -379,7 +431,7 @@ if __name__ == "__main__":
     if not should_index:
         try:
             logger.info("Checking if vector store contains data...")
-            results = vector_store.similarity_search("test", k=1)
+            results = vector_store.similarity_search("test", k=config['retrieval']['test_k'])
             if not results:
                 logger.info("Vector store is empty")
                 should_index = True
@@ -395,19 +447,17 @@ if __name__ == "__main__":
 
         # Load documents from URLs
         urls = []
-        if os.path.exists("sources.txt"):
+        sources_file = config['document_processing']['sources_file']
+        if os.path.exists(sources_file):
             try:
-                with open("sources.txt", "r") as f:
+                with open(sources_file, "r") as f:
                     urls = [line.strip() for line in f if line.strip()]
-                logger.info(f"Loaded {len(urls)} URLs from sources.txt")
+                logger.info(f"Loaded {len(urls)} URLs from {sources_file}")
             except Exception as e:
-                logger.error(f"Failed to read sources.txt: {e}")
+                logger.error(f"Failed to read {sources_file}: {e}")
         else:
-            logger.warning("sources.txt not found. Using default URLs.")
-            urls = [
-                "https://benpiper.com/articles/biblical-creation-account-genesis-theory-evolution/",
-                "https://benpiper.com/articles/what-evolution-isnt/",
-            ]
+            logger.warning(f"{sources_file} not found. Using default URLs.")
+            urls = config['document_processing']['default_urls']
 
         # Load web documents with error handling
         web_docs = []
@@ -424,31 +474,24 @@ if __name__ == "__main__":
             logger.warning("No URLs to load")
 
         # Load local documents
-        logger.info("Loading local documents from ./docs...")
+        local_docs_dir = config['document_processing']['local_docs_dir']
+        logger.info(f"Loading local documents from {local_docs_dir}...")
         local_docs = []
 
         try:
-            if not os.path.exists("./docs"):
-                os.makedirs("./docs")
-                logger.info("Created ./docs directory")
+            if not os.path.exists(local_docs_dir):
+                os.makedirs(local_docs_dir)
+                logger.info(f"Created {local_docs_dir} directory")
 
-            # Load .txt files
-            try:
-                local_loader = DirectoryLoader("./docs", glob="**/*.txt", loader_cls=TextLoader)
-                txt_docs = local_loader.load()
-                local_docs.extend(txt_docs)
-                logger.info(f"Loaded {len(txt_docs)} .txt files")
-            except Exception as e:
-                logger.error(f"Failed to load .txt files: {e}")
-
-            # Load .md files
-            try:
-                md_loader = DirectoryLoader("./docs", glob="**/*.md", loader_cls=TextLoader)
-                md_docs = md_loader.load()
-                local_docs.extend(md_docs)
-                logger.info(f"Loaded {len(md_docs)} .md files")
-            except Exception as e:
-                logger.error(f"Failed to load .md files: {e}")
+            # Load files based on supported formats
+            for glob_pattern in config['document_processing']['supported_formats']:
+                try:
+                    loader = DirectoryLoader(local_docs_dir, glob=glob_pattern, loader_cls=TextLoader)
+                    docs = loader.load()
+                    local_docs.extend(docs)
+                    logger.info(f"Loaded {len(docs)} files matching {glob_pattern}")
+                except Exception as e:
+                    logger.error(f"Failed to load files matching {glob_pattern}: {e}")
 
             logger.info(f"Total local documents loaded: {len(local_docs)}")
 
@@ -481,7 +524,7 @@ if __name__ == "__main__":
 
             if not docs:
                 logger.error("No documents loaded. Cannot proceed with indexing.")
-                logger.error("Please add documents to sources.txt or ./docs/ directory")
+                logger.error(f"Please add documents to {sources_file} or {local_docs_dir} directory")
                 sys.exit(1)
 
             logger.info(f"Total documents to process: {len(docs)}")
@@ -497,9 +540,9 @@ if __name__ == "__main__":
         try:
             logger.info("Splitting documents into chunks...")
             text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1000,  # chunk size (characters)
-                chunk_overlap=200,  # chunk overlap (characters)
-                add_start_index=True,  # track index in original document
+                chunk_size=config['document_processing']['chunk_size'],
+                chunk_overlap=config['document_processing']['chunk_overlap'],
+                add_start_index=config['document_processing']['add_start_index'],
             )
             all_splits = text_splitter.split_documents(docs)
             logger.info(f"Split into {len(all_splits)} sub-documents")

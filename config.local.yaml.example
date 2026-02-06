@@ -1,0 +1,25 @@
+# Example local configuration overrides
+# Copy this file to config.local.yaml and modify as needed
+# config.local.yaml is gitignored and won't be committed
+
+# Example: Override logging level for debugging
+# logging:
+#   level: DEBUG
+
+# Example: Override LLM settings
+# llm:
+#   model: gpt-4o
+#   temperature: 0.5
+
+# Example: Override embedding provider
+# embeddings:
+#   provider: ollama
+
+# Example: Override retrieval parameters
+# retrieval:
+#   k: 10
+
+# Example: Override chunk size
+# document_processing:
+#   chunk_size: 1500
+#   chunk_overlap: 300

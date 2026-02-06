@@ -15,4 +15,5 @@ dependencies = [
     "milvus-lite>=2.4.0",
     "mcp>=1.0.0",
     "langchain-ollama>=1.0.0",
+    "pyyaml>=6.0.0",
 ]
